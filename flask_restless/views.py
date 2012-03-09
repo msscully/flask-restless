@@ -55,6 +55,8 @@ from .helpers import strings_to_dates
 from .helpers import to_dict
 from .helpers import unicode_keys_to_strings
 from .helpers import upper_keys
+from werkzeug.exceptions import BadRequest
+
 from .search import create_query
 from .search import search
 
@@ -293,14 +295,21 @@ class FunctionAPI(ModelView):
         :ref:`functionevaluation`.
 
         """
+        if 'q' not in request.args or not request.args.get('q'):
+            return jsonify_status_code(400, message='Empty query parameter')
+        # if parsing JSON fails, return a 400 error in JSON format
         try:
-            data = json.loads(request.args.get('q')) or {}
+            data = json.loads(request.args.get('q', '{}'))
         except (TypeError, ValueError, OverflowError), exception:
             current_app.logger.exception(exception.message)
             return jsonify_status_code(400, message='Unable to decode data')
+        # if there is no 'functions' mapping, return the empty JSON object
+        if 'functions' not in data:
+            return jsonify_status_code(204)
+        # try to evaluate the functions
         try:
             result = evaluate_functions(self.session, self.model,
-                                        data.get('functions'))
+                                        data.get('functions', []))
             if not result:
                 return jsonify_status_code(204)
             return jsonpify(result)
@@ -993,9 +1002,8 @@ class API(ModelView):
 
         # try to read the parameters for the model from the body of the request
         try:
-            params = json.loads(request.data)
-        except (TypeError, ValueError, OverflowError), exception:
-            current_app.logger.exception(exception.message)
+            params = request.json or {}
+        except BadRequest, exception:
             return jsonify_status_code(400, message='Unable to decode data')
 
         # apply any preprocessors to the POST arguments
@@ -1093,12 +1101,14 @@ class API(ModelView):
 
         # try to load the fields/values to update from the body of the request
         try:
-            data = json.loads(request.data)
-        except (TypeError, ValueError, OverflowError), exception:
-            # this also happens when request.data is empty
-            current_app.logger.exception(exception.message)
+            data = request.json or {}
+        except BadRequest:
             return jsonify_status_code(400, message='Unable to decode data')
-        # Check if the request is to patch many instances of the current model.
+
+        # If there is no data to update, just return HTTP 204 No Content.
+        if len(data) == 0:
+            return jsonify_status_code(204)
+
         patchmany = instid is None
         # Perform any necessary preprocessing.
         if patchmany:
