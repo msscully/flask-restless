@@ -3,3 +3,4 @@ flask-sqlalchemy
 sqlalchemy
 python-dateutil<2.0
 simplejson
+mimerender>=0.5.2

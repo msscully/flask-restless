@@ -24,7 +24,7 @@ from setuptools import setup
 #:   explicitly.
 #: - Versions less than 2.0 of ``python-dateutil`` support Python 2.5, but
 #:   later versions do not.
-requirements = ['flask>=0.7', 'sqlalchemy']
+requirements = ['flask>=0.7', 'sqlalchemy', 'mimerender>=0.5.2']
 if sys.version_info < (2, 6):
     requirements.append('simplejson')
     requirements.append('python-dateutil<2.0')

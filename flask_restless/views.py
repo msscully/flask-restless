@@ -33,12 +33,12 @@ from flask import json
 from flask import jsonify
 from flask import request
 from flask.views import MethodView
+from mimerender import FlaskMimeRender
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm.exc import MultipleResultsFound
 from sqlalchemy.orm.exc import NoResultFound
 
-from .exceptions import json_abort
 from .helpers import evaluate_functions
 from .helpers import get_by
 from .helpers import get_columns
@@ -61,6 +61,14 @@ from .search import search
 
 #: Format string for creating Link headers in paginated responses.
 LINKTEMPLATE = '<%s?page=%s&results_per_page=%s>; rel="%s"'
+
+#: String used internally as a dictionary key for passing header information
+#: from view functions to the :func:`jsonpify` function.
+_HEADERS = '__restless_headers'
+
+#: String used internally as a dictionary key for passing status code
+#: information from view functions to the :func:`jsonpify` function.
+_STATUS = '__restless_status_code'
 
 
 class ProcessingException(Exception):
@@ -210,33 +218,46 @@ def jsonpify(*args, **kw):
     ``'callback'`` (or does nothing if no such callback function is specified
     in the request).
 
-    If `headers` is specified, it must be a dictionary specifying headers to
-    set before sending the JSONified response to the client. Headers on the
-    response will be overwritten by headers specified in the `headers`
-    dictionary.
+    If the keyword arguments include the string specified by :data:`_HEADERS`,
+    its value must be a dictionary specifying headers to set before sending the
+    JSONified response to the client. Headers on the response will be
+    overwritten by headers specified in this dictionary.
+
+    If the keyword arguments include the string specified by :data:`_STATUS`,
+    its value must be an integer representing the status code of the response.
+    Otherwise, the status code of the response will be :http:status:`200`.
 
     """
-    headers = kw.pop('headers', None)
+    # HACK In order to make the headers and status code available in the
+    # content of the response, we need to send it from the view function to
+    # this jsonpify function via its keyword arguments. This is a limitation of
+    # the mimerender library: it has no way of making the headers and status
+    # code known to the rendering functions.
+    headers = kw.pop(_HEADERS, {})
+    status_code = kw.pop(_STATUS, 200)
     response = jsonify(*args, **kw)
     callback = request.args.get('callback', False)
     if callback:
         # Reload the data from the constructed JSON string so we can wrap it in
         # a JSONP function.
         data = json.loads(response.data)
-        # Add the headers as metadata to the JSONP response.
-        meta = _headers_to_json(headers) if headers is not None else {}
-        # TODO add a jsonpify_status_code function?
-        meta['status'] = 200
-        inner = json.dumps(dict(meta=meta, data=data))
-        content = '%s( %s)' % (callback, inner)
+        # Force the 'Content-Type' header to be 'application/javascript'.
+        #
         # Note that this is different from the mimetype used in Flask for JSON
         # responses; Flask uses 'application/json'. We use
-        # 'application/javascript' because a JSONP response is not valid JSON.
-        mimetype = 'application/javascript'
-        response = current_app.response_class(content, mimetype=mimetype)
-    # Set the headers on the HTTP response as well.
+        # 'application/javascript' because a JSONP response is valid
+        # Javascript, but not valid JSON.
+        headers['Content-Type'] = 'application/javascript'
+        # Add the headers and status code as metadata to the JSONP response.
+        meta = _headers_to_json(headers) if headers is not None else {}
+        meta['status'] = status_code
+        inner = json.dumps(dict(meta=meta, data=data))
+        content = '%s( %s)' % (callback, inner)
+        response = current_app.make_response((content, status_code, headers))
+    # Set the headers and status code on the HTTP response as well.
     if headers:
         set_headers(response, headers)
+    response.status_code = status_code
     return response
 
 
@@ -301,6 +322,17 @@ def _parse_excludes(column_names):
             del relations[column]
     return columns, relations
 
+#: Creates the mimerender object necessary for decorating responses with a
+#: function that automatically formats the dictionary in the appropriate format
+#: based on the ``Accept`` header.
+#:
+#: Technical details: the first pair of parantheses instantiates the
+#: :class:`mimerender.FlaskMimeRender` class. The second pair of parentheses
+#: creates the decorator, so that we can simply use the variable ``mimerender``
+#: as a decorator.
+mimerender = FlaskMimeRender()(default='json', json=jsonpify,
+                               xml=lambda: None)  # TODO fill in xml renderer
+
 
 class ModelView(MethodView):
     """Base class for :class:`flask.MethodView` classes which represent a view
@@ -317,6 +349,9 @@ class ModelView(MethodView):
     query object, depending on how the model has been defined.
 
     """
+
+    #: List of decorators applied to every method of this class.
+    decorators = [mimerender]
 
     def __init__(self, session, model, *args, **kw):
         """Calls the constructor of the superclass and specifies the model for
@@ -363,21 +398,21 @@ class FunctionAPI(ModelView):
             data = json.loads(request.args.get('q')) or {}
         except (TypeError, ValueError, OverflowError), exception:
             current_app.logger.exception(exception.message)
-            return jsonify_status_code(400, message='Unable to decode data')
+            return dict(message='Unable to decode data'), 400
         try:
             result = evaluate_functions(self.session, self.model,
                                         data.get('functions'))
             if not result:
-                return jsonify_status_code(204)
-            return jsonpify(result)
+                return {}, 204
+            return result
         except AttributeError, exception:
             current_app.logger.exception(exception.message)
             message = 'No such field "%s"' % exception.field
-            return jsonify_status_code(400, message=message)
+            return dict(message=message), 400
         except OperationalError, exception:
             current_app.logger.exception(exception.message)
             message = 'No such function "%s"' % exception.function
-            return jsonify_status_code(400, message=message)
+            return dict(message=message), 400
 
 
 class API(ModelView):
@@ -389,7 +424,7 @@ class API(ModelView):
     """
 
     #: List of decorators applied to every method of this class.
-    decorators = [catch_processing_exceptions]
+    decorators = ModelView.decorators + [catch_processing_exceptions]
 
     def __init__(self, session, model, exclude_columns=None,
                  include_columns=None, include_methods=None,
@@ -707,7 +742,7 @@ class API(ModelView):
         self.session.rollback()
         errors = self._extract_error_messages(exception) or \
             'Could not determine specific validation errors'
-        return jsonify_status_code(400, validation_errors=errors)
+        return dict(validation_errors=errors), 400
 
     def _extract_error_messages(self, exception):
         """Tries to extract a dictionary mapping field name to validation error
@@ -834,7 +869,7 @@ class API(ModelView):
         """
         inst = get_by(self.session, self.model, instid)
         if inst is None:
-            json_abort(404)
+            return {_STATUS: 404}, 404
         return self._inst_to_dict(inst)
 
     def _search(self):
@@ -909,7 +944,7 @@ class API(ModelView):
             search_params = json.loads(request.args.get('q', '{}'))
         except (TypeError, ValueError, OverflowError), exception:
             current_app.logger.exception(exception.message)
-            return jsonify_status_code(400, message='Unable to decode data')
+            return dict(message='Unable to decode data'), 400
 
         for preprocessor in self.preprocessors['GET_MANY']:
             preprocessor(search_params=search_params)
@@ -918,13 +953,12 @@ class API(ModelView):
         try:
             result = search(self.session, self.model, search_params)
         except NoResultFound:
-            return jsonify_status_code(400, message='No result found')
+            return dict(message='No result found'), 400
         except MultipleResultsFound:
-            return jsonify_status_code(400, message='Multiple results found')
+            return dict(message='Multiple results found'), 400
         except Exception, exception:
             current_app.logger.exception(exception.message)
-            return jsonify_status_code(400,
-                                       message='Unable to construct query')
+            return dict(message='Unable to construct query'), 400
 
         # create a placeholder for the relations of the returned models
         relations = frozenset(get_relations(self.model))
@@ -963,7 +997,11 @@ class API(ModelView):
         for postprocessor in self.postprocessors['GET_MANY']:
             postprocessor(result=result)
 
-        return jsonpify(result, headers=headers)
+        # HACK Provide the headers directly in the result dictionary, so that
+        # the :func:`jsonpify` function has access to them. See the note there
+        # for more information.
+        result[_HEADERS] = headers
+        return result, 200, headers
 
     def get(self, instid, relationname, relationinstid):
         """Returns a JSON representation of an instance of model with the
@@ -986,7 +1024,7 @@ class API(ModelView):
         # get the instance of the "main" model whose ID is instid
         instance = get_by(self.session, self.model, instid)
         if instance is None:
-            json_abort(404)
+            return {_STATUS: 404}, 404
         # If no relation is requested, just return the instance. Otherwise,
         # get the value of the relation specified by `relationname`.
         if relationname is None:
@@ -1004,7 +1042,7 @@ class API(ModelView):
                 result = to_dict(related_value, deep)
         for postprocessor in self.postprocessors['GET_SINGLE']:
             postprocessor(result=result)
-        return jsonpify(result)
+        return result
 
     def delete(self, instid, relationname, relationinstid):
         """Removes the specified instance of the model with the specified name
@@ -1032,7 +1070,7 @@ class API(ModelView):
             # If the request is ``DELETE /api/person/1/computers``, error 400.
             if not relationinstid:
                 msg = 'Cannot DELETE entire "%s" relation' % relationname
-                return jsonify_status_code(400, msg)
+                return dict(message=msg), 400
             # Otherwise, get the related instance to delete.
             relation = getattr(inst, relationname)
             related_model = get_related_model(self.model, relationname)
@@ -1046,7 +1084,7 @@ class API(ModelView):
             is_deleted = True
         for postprocessor in self.postprocessors['DELETE']:
             postprocessor(is_deleted=is_deleted)
-        return jsonify_status_code(204)
+        return {}, 204
 
     def post(self):
         """Creates a new instance of a given model based on request data.
@@ -1071,14 +1109,14 @@ class API(ModelView):
         content_type = request.headers.get('Content-Type', None)
         if not content_type.startswith('application/json'):
             msg = 'Request must have "Content-Type: application/json" header'
-            return jsonify_status_code(415, message=msg)
+            return dict(message=msg), 415
 
         # try to read the parameters for the model from the body of the request
         try:
             params = json.loads(request.data)
         except (TypeError, ValueError, OverflowError), exception:
             current_app.logger.exception(exception.message)
-            return jsonify_status_code(400, message='Unable to decode data')
+            return dict(message='Unable to decode data'), 400
 
         # apply any preprocessors to the POST arguments
         for preprocessor in self.preprocessors['POST']:
@@ -1089,7 +1127,7 @@ class API(ModelView):
         for field in params:
             if not has_field(self.model, field):
                 msg = "Model does not have field '%s'" % field
-                return jsonify_status_code(400, message=msg)
+                return dict(message=msg), 400
 
         # Getting the list of relations that will be added later
         cols = get_columns(self.model)
@@ -1140,12 +1178,12 @@ class API(ModelView):
             url = '%s/%s' % (request.base_url, result[primary_key])
             # Provide that URL in the Location header in the response.
             headers = dict(Location=url)
-            return jsonify_status_code(201, headers=headers, **result)
+            return result, 201, headers
         except self.validation_exceptions, exception:
             return self._handle_validation_exception(exception)
         except IntegrityError, exception:
             current_app.logger.exception(exception.message)
-            return jsonify_status_code(400, message=exception.message)
+            return dict(message=exception.message), 400
 
     def patch(self, instid, relationname, relationinstid):
         """Updates the instance specified by ``instid`` of the named model, or
@@ -1175,7 +1213,7 @@ class API(ModelView):
         content_type = request.headers.get('Content-Type', None)
         if not content_type.startswith('application/json'):
             msg = 'Request must have "Content-Type: application/json" header'
-            return jsonify_status_code(415, message=msg)
+            return dict(message=msg), 415
 
         # try to load the fields/values to update from the body of the request
         try:
@@ -1183,7 +1221,7 @@ class API(ModelView):
         except (TypeError, ValueError, OverflowError), exception:
             # this also happens when request.data is empty
             current_app.logger.exception(exception.message)
-            return jsonify_status_code(400, message='Unable to decode data')
+            return dict(message='Unable to decode data'), 400
         # Check if the request is to patch many instances of the current model.
         patchmany = instid is None
         # Perform any necessary preprocessing.
@@ -1202,7 +1240,7 @@ class API(ModelView):
         for field in data:
             if not has_field(self.model, field):
                 msg = "Model does not have field '%s'" % field
-                return jsonify_status_code(400, message=msg)
+                return dict(message=msg), 400
 
         if patchmany:
             try:
@@ -1210,13 +1248,12 @@ class API(ModelView):
                 query = create_query(self.session, self.model, search_params)
             except Exception, exception:
                 current_app.logger.exception(exception.message)
-                return jsonify_status_code(400,
-                                           message='Unable to construct query')
+                return dict(message='Unable to construct query'), 400
         else:
             # create a SQLAlchemy Query which has exactly the specified row
             query = query_by_primary_key(self.session, self.model, instid)
             if query.count() == 0:
-                json_abort(404)
+                return {_STATUS: 404}, 404
             assert query.count() == 1, 'Multiple rows with same ID'
 
         relations = self._update_relations(query, data)
@@ -1241,7 +1278,7 @@ class API(ModelView):
             return self._handle_validation_exception(exception)
         except IntegrityError, exception:
             current_app.logger.exception(exception.message)
-            return jsonify_status_code(400, message=exception.message)
+            return dict(message=exception.message), 400
 
         # Perform any necessary postprocessing.
         if patchmany:
@@ -1253,7 +1290,7 @@ class API(ModelView):
             for postprocessor in self.postprocessors['PATCH_SINGLE']:
                 postprocessor(result=result)
 
-        return jsonify(result)
+        return result
 
     def put(self, *args, **kw):
         """Alias for :meth:`patch`."""
