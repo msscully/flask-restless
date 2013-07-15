@@ -36,7 +36,7 @@ class TestQueryCreation(TestSupportPrefilled):
         :class:`flask_restless.search.SearchParameters` object.
 
         """
-        d = {'filters': [{'name': 'name', 'val': u'%y%', 'op': 'like'}]}
+        d = {"filters": {"and": [{"name": "name", "val": u"%y%", "op": "like"}]}}
         s = SearchParameters.from_dictionary(d)
         query_d = create_query(self.session, self.Person, d)
         query_s = create_query(self.session, self.Person, s)

@@ -202,8 +202,7 @@ class SearchParameters(object):
 
     """
 
-    def __init__(self, filters=None, limit=None, offset=None, order_by=None,
-                 junction=None):
+    def __init__(self, filters=None, limit=None, offset=None, order_by=None):
         """Instantiates this object with the specified attributes.
 
         `filters` is a list of :class:`Filter` objects, representing filters to
@@ -219,24 +218,18 @@ class SearchParameters(object):
         ordering directives to apply to the result set which matches the
         search.
 
-        `junction` is either :func:`sqlalchemy.or_` or :func:`sqlalchemy.and_`
-        (if ``None``, this will default to :func:`sqlalchemy.and_`), specifying
-        how the filters should be interpreted (that is, as a disjunction or a
-        conjunction).
-
         """
         self.filters = filters or []
         self.limit = limit
         self.offset = offset
         self.order_by = order_by or []
-        self.junction = junction or AND
 
     def __repr__(self):
         """Returns a string representation of the search parameters."""
         template = ('<SearchParameters filters={}, order_by={}, limit={},'
-                    ' offset={}, junction={}>')
+                    ' offset={}')
         return template.format(self.filters, self.order_by, self.limit,
-                               self.offset, self.junction.__name__)
+                               self.offset)
 
     @staticmethod
     def from_dictionary(dictionary):
@@ -246,20 +239,18 @@ class SearchParameters(object):
         `dictionary` is a dictionary of the form::
 
             {
-              'filters': [{'name': 'age', 'op': 'lt', 'val': 20}, ...],
+            'filters': {'and':{'name': 'age', 'op': 'lt', 'val': 20}, ...},
               'order_by': [{'field': 'age', 'direction': 'desc'}, ...]
               'limit': 10,
               'offset': 3,
-              'disjunction': True
             }
 
-        where ``dictionary['filters']`` is the list of :class:`Filter` objects
-        (in dictionary form), ``dictionary['order_by']`` is the list of
-        :class:`OrderBy` objects (in dictionary form), ``dictionary['limit']``
-        is the maximum number of matching entries to return,
-        ``dictionary['offset']`` is the number of initial entries to skip in
-        the matching result set, and ``dictionary['disjunction']`` is whether
-        the filters should be joined as a disjunction or conjunction.
+        where ``dictionary['filters']`` is the dict of nested "and"|"or"
+        preceding lists of :class:`Filter` objects (in dictionary form),
+        ``dictionary['order_by']`` is the list of :class:`OrderBy` objects
+        (in dictionary form), ``dictionary['limit']`` is the maximum number
+        of matching entries to return, ``dictionary['offset']`` is the
+        number of initial entries to skip in the matching result set.
 
         The provided dictionary may have other key/value pairs, but they are
         ignored.
@@ -267,17 +258,30 @@ class SearchParameters(object):
         """
         # for the sake of brevity...
         from_dict = Filter.from_dictionary
-        filters = [from_dict(f) for f in dictionary.get('filters', [])]
+        def _build_filters(filters):
+           if "and" in filters:
+               return {'and': _build_filters(filters['and'])}
+           
+           elif "or" in filters:
+               return {'or': _build_filters(filters['or'])}
+           
+           elif type(filters) is list:
+               return [_build_filters(filt) for filt in filters]
+        
+           elif "name" in filters or "op" in filters or "val" in filters or "field" in filters:
+               return from_dict(filters)
+
+
+        filters = _build_filters(dictionary.get('filters', []))
+
         # HACK In Python 2.5, unicode dictionary keys are not allowed.
         order_by_list = dictionary.get('order_by', [])
         order_by_list = (unicode_keys_to_strings(o) for o in order_by_list)
         order_by = [OrderBy(**o) for o in order_by_list]
         limit = dictionary.get('limit')
         offset = dictionary.get('offset')
-        disjunction = dictionary.get('disjunction')
-        junction = OR if disjunction else AND
         return SearchParameters(filters=filters, limit=limit, offset=offset,
-                                order_by=order_by, junction=junction)
+                                order_by=order_by)
 
 
 class QueryBuilder(object):
@@ -350,7 +354,7 @@ class QueryBuilder(object):
         return opfunc(field, argument, fieldname)
 
     @staticmethod
-    def _create_filters(model, search_params):
+    def _create_filters(model, filters):
         """Returns the list of operations on `model` specified in the
         :attr:`filters` attribute on the `search_params` object.
 
@@ -362,22 +366,30 @@ class QueryBuilder(object):
         documentation for :func:`_create_operation` for more information.
 
         """
-        filters = []
-        for filt in search_params.filters:
-            fname = filt.fieldname
-            val = filt.argument
+        if isinstance(filters, list):
+            return [QueryBuilder._create_filters(model, filt) for filt in filters]
+    
+        elif (not isinstance(filters, Filter)) and filters.get('and', False):
+            return AND(*QueryBuilder._create_filters(model,filters['and'])).self_group()
+        
+        elif (not isinstance(filters, Filter)) and  filters.get('or', False):
+            return OR(*QueryBuilder._create_filters(model,filters['or'])).self_group()
+        
+        else:
+            fname = filters.fieldname
+            val = filters.argument
             # get the relationship from the field name, if it exists
             relation = None
             if '__' in fname:
                 relation, fname = fname.split('__')
             # get the other field to which to compare, if it exists
-            if filt.otherfield:
-                val = getattr(model, filt.otherfield)
+            if filters.otherfield:
+                val = getattr(model, filters.otherfield)
             # for the sake of brevity...
             create_op = QueryBuilder._create_operation
-            param = create_op(model, fname, filt.operator, val, relation)
-            filters.append(param)
-        return filters
+            param = create_op(model, fname, filters.operator, val, relation)
+            return param
+
 
     @staticmethod
     def create_query(session, model, search_params):
@@ -406,8 +418,10 @@ class QueryBuilder(object):
         # Adding field filters
         query = session_query(session, model)
         # may raise exception here
-        filters = QueryBuilder._create_filters(model, search_params)
-        query = query.filter(search_params.junction(*filters))
+        filters = QueryBuilder._create_filters(model, search_params.filters)
+        filter_list = []
+        filter_list.extend(filters if isinstance(filters, list) else [filters])
+        query = query.filter(*filter_list)
 
         # Order the search
         for val in search_params.order_by:
