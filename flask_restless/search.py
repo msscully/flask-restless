@@ -345,6 +345,8 @@ class QueryBuilder(object):
         # raises AttributeError if `fieldname` or `relation` does not exist
         if isinstance(relation or fieldname, str):
             field = getattr(model, relation or fieldname)
+        else:
+            field = relation or fieldname
         # each of these will raise a TypeError if the wrong number of argments
         # is supplied to `opfunc`.
         if numargs == 1:
