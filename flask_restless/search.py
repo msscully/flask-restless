@@ -17,6 +17,7 @@ import inspect
 
 from sqlalchemy import and_ as AND
 from sqlalchemy import or_ as OR
+from sqlalchemy import sql
 from sqlalchemy.ext.associationproxy import AssociationProxy
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
@@ -343,7 +344,8 @@ class QueryBuilder(object):
         # in Python 2.6 or later, this should be `argspec.args`
         numargs = len(argspec[0])
         # raises AttributeError if `fieldname` or `relation` does not exist
-        field = getattr(model, relation or fieldname)
+        if isinstance(relation or fieldname, str):
+            field = getattr(model, relation or fieldname)
         # each of these will raise a TypeError if the wrong number of argments
         # is supplied to `opfunc`.
         if numargs == 1:
@@ -386,7 +388,7 @@ class QueryBuilder(object):
             val = filters.argument
             # get the relationship from the field name, if it exists
             relation = None
-            if '__' in fname:
+            if not isinstance(fname, sql.expression.Cast) and '__' in fname:
                 relation, fname = fname.split('__')
             # get the other field to which to compare, if it exists
             if filters.otherfield:
