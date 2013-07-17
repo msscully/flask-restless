@@ -437,7 +437,10 @@ class QueryBuilder(object):
         # parameters, order by primary key.
         if search_params.order_by:
             for val in search_params.order_by:
-                field = getattr(model, val.field)
+                if not isinstance(val.field, sql.expression.Cast):
+                    field = getattr(model, val.field)
+                else:
+                    field = val.field
                 direction = getattr(field, val.direction)
                 query = query.order_by(direction())
         else:
