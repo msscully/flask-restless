@@ -261,20 +261,23 @@ class SearchParameters(object):
         # for the sake of brevity...
         from_dict = Filter.from_dictionary
         def _build_filters(filters):
-           if "and" in filters:
-               return {'and': _build_filters(filters['and'])}
+            if type(filters) is list:
+                return [_build_filters(filt) for filt in filters]
 
-           elif "or" in filters:
-               return {'or': _build_filters(filters['or'])}
+            elif "and" in filters:
+                return {'and': _build_filters(filters['and'])}
 
-           elif type(filters) is list:
-               return [_build_filters(filt) for filt in filters]
+            elif "or" in filters:
+                return {'or': _build_filters(filters['or'])}
 
-           elif "name" in filters or "op" in filters or "val" in filters or "field" in filters:
-               return from_dict(filters)
+            elif "name" in filters or "op" in filters or "val" in filters or "field" in filters:
+                return from_dict(filters)
 
+        filters_param = dictionary.get('filters', [])
+        if filters_param is None:
+            filters_param = []
 
-        filters = _build_filters(dictionary.get('filters', []))
+        filters = _build_filters(filters_param)
 
         # HACK In Python 2.5, unicode dictionary keys are not allowed.
         order_by_list = dictionary.get('order_by', [])
