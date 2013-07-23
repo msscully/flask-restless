@@ -346,7 +346,7 @@ class QueryBuilder(object):
         # in Python 2.6 or later, this should be `argspec.args`
         numargs = len(argspec[0])
         # raises AttributeError if `fieldname` or `relation` does not exist
-        if isinstance(relation or fieldname, str):
+        if not isinstance(relation or fieldname, sql.expression.Cast):
             field = getattr(model, relation or fieldname)
         else:
             field = relation or fieldname
@@ -428,7 +428,7 @@ class QueryBuilder(object):
         filters = QueryBuilder._create_filters(model, search_params.filters)
         filter_list = []
         filter_list.extend(filters if isinstance(filters, list) else [filters])
-        query = query.filter(*filter_list)
+        query = query.filter(AND(*filter_list))
 
         # Order the search
         for val in search_params.order_by:
