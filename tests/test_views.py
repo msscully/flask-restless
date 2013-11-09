@@ -1825,7 +1825,7 @@ class TestSearch(TestSupportPrefilled):
         data = {"filters":{"or":[{"name":'age', "op":'le', "val":10},
                                  {"name":'age', "op":'ge', "val":25}]}
                }
-        print dumps(data)
+        print "dumps(data): %s" % dumps(data)
         print "filters: %s" % data['filters']
         response = self.app.search('/api/person', dumps(data))
         assert 200 == response.status_code
@@ -1839,12 +1839,12 @@ class TestSearch(TestSupportPrefilled):
         data = {"filters":{"and":[{"name":'age', "op":'eq', "val":25},
                                  {"name":'name', "op":'like', "val":"%Lucy%"}]}
                }
-        print dumps(data)
+        print "dumps(data): %s" % dumps(data)
         print "filters: %s" % data['filters']
         response = self.app.search('/api/person', dumps(data))
         assert 200 == response.status_code
         data = loads(response.data)['objects']
-        print data
+        print "data: %s" % data
         assert 1 == len(data)
         assert set(['Lucy']) == \
             set([person['name'] for person in data])
@@ -1858,12 +1858,12 @@ class TestSearch(TestSupportPrefilled):
                                          ]}
                                  ]}
                }
-        print dumps(data)
+        print "dumps(data): %s" % dumps(data)
         print "filters: %s" % data['filters']
         response = self.app.search('/api/person', dumps(data))
         assert 200 == response.status_code
         data = loads(response.data)['objects']
-        print data
+        print "data: %s" % data
         assert 2 == len(data)
         assert set(['Mary','Katy']) == \
             set([person['name'] for person in data])
@@ -1876,12 +1876,12 @@ class TestSearch(TestSupportPrefilled):
                                    {"name":'age', "op":'le', "val":19}]}
                                  ]}
                }
-        print dumps(data)
+        print "dumps(data): %s" % dumps(data)
         print "filters: %s" % data['filters']
         response = self.app.search('/api/person', dumps(data))
         assert 200 == response.status_code
         data = loads(response.data)['objects']
-        print data
+        print "data: %s" % data
         assert 3 == len(data)
         assert set(['Mary','Lucy','John']) == \
             set([person['name'] for person in data])
