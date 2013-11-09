@@ -1537,17 +1537,72 @@ class TestSearch(TestSupportPrefilled):
         assert resp.status_code == 400
         assert loads(resp.data)['message'] == 'Multiple results found'
 
-    def test_search_disjunction(self):
+    def test_search_or(self):
         """Tests for search with disjunctive filters."""
-        data = dict(filters=[dict(name='age', op='le', val=10),
-                             dict(name='age', op='ge', val=25)],
-                    disjunction=True)
+        data = {"filters":{"or":[{"name":'age', "op":'le', "val":10},
+                                 {"name":'age', "op":'ge', "val":25}]}
+               }
+        print "dumps(data): %s" % dumps(data)
+        print "filters: %s" % data['filters']
         response = self.app.search('/api/person', dumps(data))
         assert 200 == response.status_code
         data = loads(response.data)['objects']
         assert 3 == len(data)
         assert set(['Lucy', 'Katy', 'John']) == \
             set([person['name'] for person in data])
+
+    def test_search_and(self):
+        """Tests for search with and filters."""
+        data = {"filters":{"and":[{"name":'age', "op":'eq', "val":25},
+                                 {"name":'name', "op":'like', "val":"%Lucy%"}]}
+               }
+        print "dumps(data): %s" % dumps(data)
+        print "filters: %s" % data['filters']
+        response = self.app.search('/api/person', dumps(data))
+        assert 200 == response.status_code
+        data = loads(response.data)['objects']
+        print "data: %s" % data
+        assert 1 == len(data)
+        assert set(['Lucy']) == \
+            set([person['name'] for person in data])
+
+    def test_search_and_or(self):
+        """Tests for search with and filters."""
+        data = {"filters":{"and":[{"name":'age', "op":'le', "val":23},
+                                  {"or": 
+                                   [{"name":'name', "op":'==', "val":'Mary'},
+                                    {"name":'is_minor', "op":'==', "val":True}
+                                         ]}
+                                 ]}
+               }
+        print "dumps(data): %s" % dumps(data)
+        print "filters: %s" % data['filters']
+        response = self.app.search('/api/person', dumps(data))
+        assert 200 == response.status_code
+        data = loads(response.data)['objects']
+        print "data: %s" % data
+        assert 2 == len(data)
+        assert set(['Mary','Katy']) == \
+            set([person['name'] for person in data])
+
+    def test_search_or_and(self):
+        """Tests for search with and filters."""
+        data = {"filters":{"or":[{"name":'age', "op":'ge', "val":25},
+                                  {"and": 
+                                   [{"name":'is_minor', "op":'==', "val":False},
+                                   {"name":'age', "op":'le', "val":19}]}
+                                 ]}
+               }
+        print "dumps(data): %s" % dumps(data)
+        print "filters: %s" % data['filters']
+        response = self.app.search('/api/person', dumps(data))
+        assert 200 == response.status_code
+        data = loads(response.data)['objects']
+        print "data: %s" % data
+        assert 3 == len(data)
+        assert set(['Mary','Lucy','John']) == \
+            set([person['name'] for person in data])
+
 
     def test_search_bad_arguments(self):
         """Tests that search requests with bad parameters respond with an error
