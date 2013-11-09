@@ -89,6 +89,19 @@ class TestQueryCreation(TestSupportPrefilled):
         assert results[0].other == 10
         assert results[1].other == 19
 
+        computer2 = self.Computer(name=u'church', vendor=u'Lambda')
+        p2 = self.session.query(self.Person).filter_by(id=2).first()
+        p2.computers.append(computer2)
+        self.session.commit()
+
+        d = {'order_by': [{'field': 'computers__name', 'direction': 'asc'}]}
+        query = create_query(self.session, self.Person, d)
+        assert query.count() == 2
+        results = query.all()
+        assert results[0].id == 2
+        assert results[1].id == 1
+        assert results[0].computers[0].name == 'church'
+        assert results[1].computers[0].name == 'turing'
 
 class TestOperators(TestSupportPrefilled):
     """Tests for each of the query operators defined in

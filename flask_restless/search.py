@@ -441,7 +441,16 @@ class QueryBuilder(object):
         if search_params.order_by:
             for val in search_params.order_by:
                 if not isinstance(val.field, sql.expression.Cast):
-                    field = getattr(model, val.field)
+                    # Check if we're sorting on a relation's field
+                    field_name = val.field
+                    if '__' in val.field:
+                        relation_name, field_name = val.field.split('__')
+                        relation = getattr(model, relation_name)
+                        related_class = relation.property.mapper.class_
+                        query = query.join(related_class)
+                        model = related_class
+
+                    field = getattr(model, field_name)
                 else:
                     field = val.field
                 direction = getattr(field, val.direction)
