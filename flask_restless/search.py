@@ -411,7 +411,17 @@ class QueryBuilder(object):
 
         # Order the search
         for val in search_params.order_by:
-            field = getattr(model, val.field)
+            # Check if we're sorting on a relation's field
+            field_name = val.field
+            if '__' in val.field:
+                relation_name, field_name = val.field.split('__')
+                relation = getattr(model, relation_name)
+                related_class = relation.property.mapper.class_
+                query = query.join(related_class)
+                model = related_class
+
+            field = getattr(model, field_name)
+ 
             direction = getattr(field, val.direction)
             query = query.order_by(direction())
 
