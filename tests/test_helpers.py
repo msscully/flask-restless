@@ -25,6 +25,7 @@ from flask.ext.restless.helpers import get_relations
 from flask.ext.restless.helpers import partition
 from flask.ext.restless.helpers import primary_key_name
 from flask.ext.restless.helpers import to_dict
+from flask.ext.restless.helpers import unicode_keys_to_strings
 from flask.ext.restless.helpers import upper_keys
 from flask.ext.restless.helpers import get_by
 from flask.ext.restless.helpers import is_like_list
@@ -88,6 +89,14 @@ class TestSessionQuery(DatabaseTestBase):
 
 class TestHelpers(object):
     """Unit tests for the helper functions."""
+
+    def test_unicode_keys_to_strings(self):
+        """Test for converting keys of a dictionary from ``unicode`` to
+        ``string`` objects.
+
+        """
+        for k in unicode_keys_to_strings({u'x': 1, u'y': 2, u'z': 3}):
+            assert isinstance(k, str)
 
     def test_partition(self):
         """Test for partitioning a list into two lists based on a given
