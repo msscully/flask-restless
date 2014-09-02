@@ -1205,7 +1205,7 @@ class API(ModelView):
 
         try:
             # Instantiate the model with the parameters.
-            modelargs = dict([(i, params[i]) for i in props])
+            modelargs = dict([(i, data[i]) for i in props])
             # HACK Python 2.5 requires __init__() keywords to be strings.
             instance = self.model(**unicode_keys_to_strings(modelargs))
 
